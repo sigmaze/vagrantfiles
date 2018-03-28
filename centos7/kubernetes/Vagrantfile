@@ -1,0 +1,45 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+# All Vagrant configuration is done below. The "2" in Vagrant.configure
+# configures the configuration version (we support older styles for
+# backwards compatibility). Please don't change it unless you know what
+# you're doing.
+# host_interfaces = %x( VBoxManage list bridgedifs ).split("\n").grep(/(Status|Name)/)
+# puts host_interfaces
+
+vm_prefix_name = '.local'
+ pcbridge = "Intel(R) Dual Band Wireless-AC 3165"
+#pcbridge = "Killer E2400 Gigabit Ethernet Controller"
+# nodes = [
+  # { :hostname => 'master1', :ip => '192.168.99.100', :box => 'centos/7', :ram => 2048 , :cpu => 4 , :provisionfile => 'provision-master1.sh' },
+  # { :hostname => 'node1',  :ip => '192.168.99.101' , :box => 'centos/7', :ram => 2048, :cpu => 4, :provisionfile => 'provision-node1.sh' },
+  # { :hostname => 'node2',  :ip => '192.168.99.102' , :box => 'centos/7', :ram => 2048, :cpu => 4, :provisionfile => 'provision-node2.sh'  }
+# ]
+
+
+nodes = [
+  { :hostname => 'master1', :ip => '192.168.99.100', :box => 'centos/7', :ram => 2048 , :cpu => 4, :provisionfile => 'provision-master1.sh' }
+]
+Vagrant.configure("2") do |config|
+# Dodany provider
+    config.vm.provider "virtualbox"
+    nodes.each do |node|
+        config.vm.define node[:hostname] do |nodeconfig|
+
+            nodeconfig.vm.box = node[:box]
+            nodeconfig.vm.hostname = node[:hostname] + ".local"
+            nodeconfig.vm.network :private_network, ip: node[:ip],
+                virtualbox__intnet: "kubernetes"
+            nodeconfig.vm.network :public_network, type: "dhcp", bridge: pcbridge
+            nodeconfig.vm.provider :virtualbox do |vb|
+                vb.name = node[:hostname] + vm_prefix_name
+                vb.memory = node[:ram] 
+                vb.cpus = node[:cpu]
+            nodeconfig.vm.provision "shell" do |s|
+                s.path = node[:provisionfile]
+            end
+            end
+         end
+     end
+end
