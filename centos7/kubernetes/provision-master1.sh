@@ -7,8 +7,9 @@
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 SCRIPT_NAME="$(basename "$(test -L "$0" && readlink "$0" || echo "$0")")"
-LOG_DIR="${SCRIPT_DIR}/${SCRIPT_NAME%%.sh}.log"
-
+LOG_DIR="/root/${SCRIPT_NAME%%.sh}.log"
+# set -e
+# set -o pipefail     
 
 #Logging handling 
 function log (){
@@ -44,12 +45,86 @@ EOF
 
 }
 
+function repoprint () {
+
+cat <<EOF 
+[kubernetes]
+name=Kubernetes
+baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-$(uname -m)
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+EOF
+}
+
+function InstallTools() {
+
+    log Instaling General tools
+    yum install wget curl net-tools vim -y
+
+}
+
+function fixingIssueOnVagrant(){
+cat <<EOF > /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables = 1
+EOF
+
+    sysctl --system
+}
+
+function creatingMaster() {
+    #master node part only if wrong dirver is used for docker
+    # docker info | grep -i cgroup
+    # cat /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+    # sed -i "s/cgroup-driver=systemd/cgroup-driver=cgroupfs/g" /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+    # systemctl daemon-reload
+    # systemctl restart kubelet
+
+    #master 
+    fixingIssueOnVagrant 
+
+    swapoff -a
+    #pod-network-cidr required for flanel
+    log Starting kubeadm init
+    kubeadm init --apiserver-advertise-address=$(ifconfig eth2|grep 'inet '|awk '{print $2}') --pod-network-cidr='10.244.0.0/16'
+   
+    mkdir -p $HOME/.kube
+    sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+    sudo chown $(id -u):$(id -g) $HOME/.kube/config
+    
+     # deplying flannel
+    kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+    
+}
+
+function SaveTokensAndCerts() {
+
+
+ kubeadm token list|head -n 2|tail -n 1|awk {'print $1'}
+ netstat -lnp|grep kube-apiserver|awk -F':' {'print $4'}
+}
 function startProvisioning() {
     log Started script on $(whoami)
-    log installing docker
+    InstallTools || return 1
+    
+    log installing docker and kubernetes necessery components
     yum install -y docker
-    systemctl enable docker && systemctl start docker
- 
+    systemctl enable docker && systemctl start docker 
+    repoprint > /etc/yum.repos.d/kubernetes.repo
+    setenforce 0
+    yum install -y kubelet kubeadm kubectl
+    systemctl enable kubelet && systemctl start kubelet
+    yum update
+    
+
+    
+    log Initializing your master
+
+    creatingMaster || return 1
+
+
 }
 
 # argument handling to 
@@ -93,7 +168,7 @@ log [DEBUG] " main variables set-
 	LOG_DIR=$LOG_DIR"
 #MAIN PROGRAM and functions
 if [ $# -eq 0 ];then
-	startProvisioning && exit 0
+	startProvisioning 1>&2 > >(tee -a $LOG_DIR) 2> >(tee -a $LOG_DIR >&2)
 	
 fi
 

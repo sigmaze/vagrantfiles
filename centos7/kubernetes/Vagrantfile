@@ -9,17 +9,18 @@
 # puts host_interfaces
 
 vm_prefix_name = '.local'
- pcbridge = "Intel(R) Dual Band Wireless-AC 3165"
-#pcbridge = "Killer E2400 Gigabit Ethernet Controller"
+ # pcbridge = "Intel(R) Dual Band Wireless-AC 3165"
+ pcbridge = "Killer E2400 Gigabit Ethernet Controller"
 # nodes = [
-  # { :hostname => 'master1', :ip => '192.168.99.100', :box => 'centos/7', :ram => 2048 , :cpu => 4 , :provisionfile => 'provision-master1.sh' },
-  # { :hostname => 'node1',  :ip => '192.168.99.101' , :box => 'centos/7', :ram => 2048, :cpu => 4, :provisionfile => 'provision-node1.sh' },
-  # { :hostname => 'node2',  :ip => '192.168.99.102' , :box => 'centos/7', :ram => 2048, :cpu => 4, :provisionfile => 'provision-node2.sh'  }
+  # { :hostname => 'master1', :ip => '10.244.0.100',:netmask => '255.255.0.0' , :box => 'centos/7', :ram => 2048 , :cpu => 4 , :provisionfile => 'provision-master1.sh' },
+  # { :hostname => 'node1',  :ip => '10.244.0.101' ,:netmask => '255.255.0.0' ,  :box => 'centos/7', :ram => 2048, :cpu => 4, :provisionfile => 'provision-node1.sh' },
+  # { :hostname => 'node2',  :ip => '10.244.0.102' , :netmask => '255.255.0.0' , :box => 'centos/7', :ram => 2048, :cpu => 4, :provisionfile => 'provision-node2.sh'  }
 # ]
 
 
 nodes = [
-  { :hostname => 'master1', :ip => '192.168.99.100', :box => 'centos/7', :ram => 2048 , :cpu => 4, :provisionfile => 'provision-master1.sh' }
+  { :hostname => 'master1', :ip => '10.244.0.100',:netmask => '255.255.0.0' ,  :box => 'centos/7', :ram => 2048 , :cpu => 4, :provisionfile => 'provision-master1.sh' },
+  { :hostname => 'node1',  :ip => '10.244.0.101' ,:netmask => '255.255.0.0' ,  :box => 'centos/7', :ram => 2048, :cpu => 4, :provisionfile => 'provision-node1.sh' }
 ]
 Vagrant.configure("2") do |config|
 # Dodany provider
@@ -29,17 +30,17 @@ Vagrant.configure("2") do |config|
 
             nodeconfig.vm.box = node[:box]
             nodeconfig.vm.hostname = node[:hostname] + ".local"
-            nodeconfig.vm.network :private_network, ip: node[:ip],
+            nodeconfig.vm.network :private_network, ip: node[:ip], :adapter => 2, 
                 virtualbox__intnet: "kubernetes"
-            nodeconfig.vm.network :public_network, type: "dhcp", bridge: pcbridge
+            nodeconfig.vm.network :public_network, type: "dhcp", bridge: pcbridge, :adapter => 3
             nodeconfig.vm.provider :virtualbox do |vb|
                 vb.name = node[:hostname] + vm_prefix_name
                 vb.memory = node[:ram] 
                 vb.cpus = node[:cpu]
-            nodeconfig.vm.provision "shell" do |s|
-                s.path = node[:provisionfile]
             end
-            end
+            nodeconfig.vm.provision "shell", path: node[:provisionfile]
+            nodeconfig.vm.provision "shell", inline: "ifconfig eth1 "+node[:ip]+" netmask "+node[:netmask]+" up"
+
          end
      end
 end
