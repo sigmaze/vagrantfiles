@@ -7,7 +7,9 @@
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 SCRIPT_NAME="$(basename "$(test -L "$0" && readlink "$0" || echo "$0")")"
-LOG_DIR="/root/${SCRIPT_NAME%%.sh}.log"
+LOG_DIR="${HOME}/${SCRIPT_NAME%%.sh}.log"
+SAVE_DIR="/root/k8sinfo"
+MASTER_API_HOST="192.168.99.100"
 # set -e
 # set -o pipefail     
 
@@ -66,48 +68,59 @@ function InstallTools() {
 }
 
 function fixingIssueOnVagrant(){
+
 cat <<EOF > /etc/sysctl.d/k8s.conf
 net.bridge.bridge-nf-call-ip6tables = 1
 net.bridge.bridge-nf-call-iptables = 1
 EOF
 
     sysctl --system
-}
-
-function creatingMaster() {
-    #master node part only if wrong dirver is used for docker
-    # docker info | grep -i cgroup
-    # cat /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
-    # sed -i "s/cgroup-driver=systemd/cgroup-driver=cgroupfs/g" /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
-    # systemctl daemon-reload
-    # systemctl restart kubelet
-
-    #master 
-    fixingIssueOnVagrant 
-
     swapoff -a
-    #pod-network-cidr required for flanel
-    log Starting kubeadm init
-    kubeadm init --apiserver-advertise-address=$(ifconfig eth2|grep 'inet '|awk '{print $2}') --pod-network-cidr='10.244.0.0/16'
+    
+    mkdir -p /root/.ssh/
+    cp /home/vagrant/.ssh/id_rsa_root /root/.ssh/id_rsa
+    cp /home/vagrant/.ssh/id_rsa.pub_root /root/.ssh/id_rsa.pub
+    echo #{ssh_insecure_key_public} >> /root/.ssh/authorized_keys
+    chown root /root/.ssh/*
+    chmod 400 /root/.ssh/*
+    sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config
+    systemctl restart sshd
+}
+
+function getMasterApiFiles() {
    
-    mkdir -p $HOME/.kube
-    sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
-    sudo chown $(id -u):$(id -g) $HOME/.kube/config
-    
-     # deplying flannel
-    kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
-    
+ mkdir -p ${SAVE_DIR}
+     
+ scp $MASTER_API_HOST:${SAVE_DIR}/k8s_api_token ${SAVE_DIR}
+ scp $MASTER_API_HOST:${SAVE_DIR}/k8s_api_port ${SAVE_DIR}
+ scp $MASTER_API_HOST:${SAVE_DIR}/k8s_config ${SAVE_DIR}
+ scp $MASTER_API_HOST:${SAVE_DIR}/k8s_sha256 ${SAVE_DIR}
+
+
+}
+function SSHecho(){
+    ssh -o StrictHostKeyChecking=no $MASTER_API_HOST echo "Added host"
 }
 
-function SaveTokensAndCerts() {
+function joinNode() {
+SSHecho
+getMasterApiFiles
+token=$(cat ${SAVE_DIR}/k8s_api_token)
+master_api_port=$(cat ${SAVE_DIR}/k8s_api_port)
+hash_master_api=$(cat ${SAVE_DIR}/k8s_sha256)
 
-
- kubeadm token list|head -n 2|tail -n 1|awk {'print $1'}
- netstat -lnp|grep kube-apiserver|awk -F':' {'print $4'}
+# kubeadm join 192.168.1.74:6443 --token u8m859.m3fn39kzxnhtd3no --discovery-token-ca-cert-hash sha256:eb04995e8e4798b5cfc6b2195ff6c91e04eb398f56b4465c73e5d26ee6e027d7
+log "start kubeadm join"
+log "kubeadm join $MASTER_API_HOST:$master_api_port --token $token --discovery-token-ca-cert-hash sha256:$hash_master_api"
+kubeadm join $MASTER_API_HOST:$master_api_port --token $token --discovery-token-ca-cert-hash sha256:$hash_master_api  
 }
+
+
+
 function startProvisioning() {
     log Started script on $(whoami)
     InstallTools || return 1
+    fixingIssueOnVagrant
     
     log installing docker and kubernetes necessery components
     yum install -y docker
@@ -116,14 +129,14 @@ function startProvisioning() {
     setenforce 0
     yum install -y kubelet kubeadm kubectl
     systemctl enable kubelet && systemctl start kubelet
-    yum update
+    # yum update -y
     
-
     
-    log Initializing your master
-
-    creatingMaster || return 1
-
+    log Getting k8s masterapi files
+    joinNode
+    
+    
+    
 
 }
 
@@ -168,7 +181,8 @@ log [DEBUG] " main variables set-
 	LOG_DIR=$LOG_DIR"
 #MAIN PROGRAM and functions
 if [ $# -eq 0 ];then
-	startProvisioning 1>&2 > >(tee -a $LOG_DIR) 2> >(tee -a $LOG_DIR >&2)
+	 startProvisioning 1>&2 > >(tee -a $LOG_DIR) 2> >(tee -a $LOG_DIR >&2)
+	# InstallTools 1>&2 > >(tee -a $LOG_DIR) 2> >(tee -a $LOG_DIR >&2)
 	
 fi
 

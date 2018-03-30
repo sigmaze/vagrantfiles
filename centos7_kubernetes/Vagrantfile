@@ -1,0 +1,94 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+# All Vagrant configuration is done below. The "2" in Vagrant.configure
+# configures the configuration version (we support older styles for
+# backwards compatibility). Please don't change it unless you know what
+# you're doing.
+# host_interfaces = %x( VBoxManage list bridgedifs ).split("\n").grep(/(Status|Name)/)
+# puts host_interfaces
+
+# ssh_insecure_key = File.readlines("#{Dir.getwd}/.vagrant/machines/master1/virtualbox/insecure_private_key").first.strip
+# puts ssh_insecure_key
+
+vm_prefix_name = '.local'
+ # pcbridge = "Intel(R) Dual Band Wireless-AC 3165"
+ pcbridge = "Killer E2400 Gigabit Ethernet Controller"
+nodes = [
+  { :hostname => 'master1', :ip => '192.168.99.100',:netmask => '255.255.255.0' , :box => 'centos/7', :ram => 1500 , :cpu => 4 , :provisionfile => 'provision-master1.sh' },
+  { :hostname => 'node1',  :ip => '192.168.99.101' ,:netmask => '255.255.255.0' ,  :box => 'centos/7', :ram => 1500, :cpu => 4, :provisionfile => 'provision-node.sh' },
+  { :hostname => 'node2',  :ip => '192.168.99.102' , :netmask => '255.255.255.0' , :box => 'centos/7', :ram => 1500, :cpu => 4, :provisionfile => 'provision-node.sh'  }
+]
+# nodes = [
+  # { :hostname => 'master1', :ip => '192.168.99.100',:netmask => '255.255.255.0' , :box => 'centos/7', :ram => 2048 , :cpu => 4 , :provisionfile => 'provision-master1.sh' },
+  # { :hostname => 'node1',  :ip => '192.168.99.101' ,:netmask => '255.255.255.0' ,  :box => 'centos/7', :ram => 2048, :cpu => 4, :provisionfile => 'provision-node.sh' },
+# ]
+
+#setting ssh_keys_paths
+vagrant_insecure_key_path="#{ENV['VAGRANT_HOME']}".gsub!("\\","/")+"/insecure_private_key"
+vagran_project_default_private_key="#{Dir.getwd}/../ssh_keys/id_rsa"
+vagran_project_default_public_key="#{Dir.getwd}/../ssh_keys/id_rsa.pub"
+
+
+Vagrant.configure("2") do |config|
+# Dodany provider
+    config.vm.provider "virtualbox"
+    config.ssh.keys_only=true
+    config.ssh.insert_key = false
+    # config.ssh.insert_key=false
+    config.ssh.private_key_path=[vagrant_insecure_key_path, vagran_project_default_private_key]
+    # config.ssh.private_key_path="#{Dir.getwd}/../ssh_keys/id_rsa"
+    
+    puts config.ssh.private_key_path
+    
+    nodes.each do |node|
+        config.vm.define node[:hostname] do |nodeconfig|
+
+            # nodeconfig.vm.synced_folder ".", "/vagrant", type: "rsync", rsync__exclude: [".git/",".vagrant"], rsync__auto: true
+            # nodeconfig.vm.provision "file", source: './*.sh', destination: "/vagrant/"
+            # nodeconfig.vm.provision "file", source: './Vagrantfile', destination: "/vagrant/"
+            
+            nodeconfig.vm.box = node[:box]
+            nodeconfig.vm.hostname = node[:hostname] + ".local"
+            nodeconfig.vm.network :private_network, ip: node[:ip], :adapter => 2, netmask: node[:netmask],
+                virtualbox__intnet: "kubernetes"
+            nodeconfig.vm.network :public_network, type: "dhcp", bridge: pcbridge, :adapter => 3
+            nodeconfig.vm.provider :virtualbox do |vb|
+                vb.name = node[:hostname] + vm_prefix_name
+                vb.memory = node[:ram] 
+                vb.cpus = node[:cpu]
+            end
+            #adding keys to comunicate over root between nodes
+             nodeconfig.vm.provision "file",preserve_order: true, source: vagran_project_default_private_key, destination: "/home/vagrant/.ssh/id_rsa_root"
+             nodeconfig.vm.provision "file",preserve_order: true, source: vagran_project_default_public_key, destination: "/home/vagrant/.ssh/id_rsa.pub_root"
+
+           
+           #adding keys to communicate between the nodes
+            nodeconfig.vm.provision "shell" do |s|
+              ssh_insecure_key_public = File.readlines(vagran_project_default_public_key).first.strip
+              s.inline = <<-SHELL
+                mkdir -p /root/.ssh/
+                cp /home/vagrant/.ssh/id_rsa_root /root/.ssh/id_rsa
+                cp /home/vagrant/.ssh/id_rsa.pub_root /root/.ssh/id_rsa.pub
+                echo #{ssh_insecure_key_public} >> /root/.ssh/authorized_keys
+                chown root /root/.ssh/*
+                chmod 400 /root/.ssh/*
+                sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config
+                systemctl restart sshd
+              SHELL
+              
+            end
+              nodeconfig.vm.provision "shell", path: node[:provisionfile], preserve_order: true
+            
+            
+            
+            # nodeconfig.vm.provision "shell", run: "always", inline: "ifconfig eth1 "+node[:ip]+" netmask "+node[:netmask]+" up"
+            
+            
+         end
+     end
+
+    
+end
+
+
